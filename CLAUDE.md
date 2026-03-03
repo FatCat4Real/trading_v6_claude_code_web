@@ -1,0 +1,4 @@
+- Use `uv` as environment manager
+- Use `uv run` to run python file
+- Use `uv add` to add packages
+- Use `uv` if possible
