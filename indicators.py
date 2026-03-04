@@ -200,7 +200,7 @@ def keltner_channel(df):
 
 
 # ============================================================
-# Additional Indicators (8)
+# Additional Indicators (9)
 # ============================================================
 
 def hull_ma_cross(df):
@@ -259,6 +259,51 @@ def linreg_slope(df):
     slope = pd.Series(talib.LINEARREG_SLOPE(df['CLOSE'].values, 14), index=df.index)
     return crossover(slope, const(0, df.index)), crossunder(slope, const(0, df.index))
 
+def atr_trailing_stop(df):
+    # ATR Trailing Stop (Chandelier Exit variant)
+    period, multiplier = 14, 3.0
+    high, low, close = df['HIGH'].values, df['LOW'].values, df['CLOSE'].values
+    atr = talib.ATR(high, low, close, period)
+
+    n = len(df)
+    trail = np.full(n, np.nan)
+    direction = np.ones(n, dtype=int)  # 1=long, -1=short
+
+    start = period
+    if start >= n:
+        return pd.Series(False, index=df.index), pd.Series(False, index=df.index)
+
+    # Initialize: assume long if close above midrange
+    trail[start] = close[start] - multiplier * atr[start]
+    direction[start] = 1
+
+    for i in range(start + 1, n):
+        if direction[i - 1] == 1:
+            # Long: stop ratchets up, never down
+            new_stop = close[i] - multiplier * atr[i]
+            trail[i] = max(new_stop, trail[i - 1])
+            if close[i] < trail[i]:
+                # Flip to short
+                direction[i] = -1
+                trail[i] = close[i] + multiplier * atr[i]
+            else:
+                direction[i] = 1
+        else:
+            # Short: stop ratchets down, never up
+            new_stop = close[i] + multiplier * atr[i]
+            trail[i] = min(new_stop, trail[i - 1])
+            if close[i] > trail[i]:
+                # Flip to long
+                direction[i] = 1
+                trail[i] = close[i] - multiplier * atr[i]
+            else:
+                direction[i] = -1
+
+    d = pd.Series(direction, index=df.index)
+    buy = (d == 1) & (d.shift(1) == -1)
+    sell = (d == -1) & (d.shift(1) == 1)
+    return buy.fillna(False), sell.fillna(False)
+
 
 # ============================================================
 # Registry: {display_name: (function, source)}
@@ -297,4 +342,5 @@ INDICATORS = {
     'Ultimate Oscillator': (ultimate_oscillator, 'ta-lib / Larry Williams'),
     'Chande Momentum': (chande_momentum, 'ta-lib / Tushar Chande'),
     'LinReg Slope': (linreg_slope, 'ta-lib'),
+    'ATR Trailing Stop': (atr_trailing_stop, 'Chuck LeBeau'),
 }
