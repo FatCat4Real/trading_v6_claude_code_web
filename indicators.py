@@ -200,7 +200,7 @@ def keltner_channel(df):
 
 
 # ============================================================
-# Additional Indicators (9)
+# Additional Indicators (10)
 # ============================================================
 
 def hull_ma_cross(df):
@@ -258,6 +258,72 @@ def linreg_slope(df):
     # Linear Regression Slope
     slope = pd.Series(talib.LINEARREG_SLOPE(df['CLOSE'].values, 14), index=df.index)
     return crossover(slope, const(0, df.index)), crossunder(slope, const(0, df.index))
+
+def cdc_atr_trailing_stop(df):
+    # CDC ATR Trailing Stop V2.1 (2013) - dual fast/slow trail system
+    close = df['CLOSE'].values
+    high, low = df['HIGH'].values, df['LOW'].values
+    n = len(df)
+
+    # Fast Trail: ATR(5) * 0.5
+    ap1, af1 = 5, 0.5
+    atr1 = talib.ATR(high, low, close, ap1)
+    sl1 = af1 * atr1
+
+    # Slow Trail: ATR(10) * 2.0
+    ap2, af2 = 10, 2.0
+    atr2 = talib.ATR(high, low, close, ap2)
+    sl2 = af2 * atr2
+
+    start = max(ap1, ap2)
+    if start >= n:
+        return pd.Series(False, index=df.index), pd.Series(False, index=df.index)
+
+    def calc_trail(close_arr, sl_arr):
+        trail = np.zeros(n)
+        for i in range(start, n):
+            prev = trail[i - 1]
+            if close_arr[i] > prev and close_arr[i - 1] > prev:
+                trail[i] = max(prev, close_arr[i] - sl_arr[i])
+            elif close_arr[i] < prev and close_arr[i - 1] < prev:
+                trail[i] = min(prev, close_arr[i] + sl_arr[i])
+            elif close_arr[i] > prev:
+                trail[i] = close_arr[i] - sl_arr[i]
+            else:
+                trail[i] = close_arr[i] + sl_arr[i]
+        return trail
+
+    trail1 = calc_trail(close, sl1)
+    trail2 = calc_trail(close, sl2)
+
+    # Histogram and signal line
+    hst = pd.Series(trail1 - trail2, index=df.index)
+    sig = hst.ewm(span=9, adjust=False).mean()
+
+    # Color zones
+    green = (hst > 0) & (hst > sig)
+    red = (hst < 0) & (hst < sig)
+
+    # barssince: count bars since condition was last True
+    green_since = np.full(n, n, dtype=int)
+    red_since = np.full(n, n, dtype=int)
+    for i in range(n):
+        if green.iloc[i]:
+            green_since[i] = 0
+        elif i > 0:
+            green_since[i] = green_since[i - 1] + 1
+        if red.iloc[i]:
+            red_since[i] = 0
+        elif i > 0:
+            red_since[i] = red_since[i - 1] + 1
+
+    bull = pd.Series(green_since < red_since, index=df.index)
+    bear = pd.Series(red_since < green_since, index=df.index)
+
+    # Buy = Green and previous bar was Bear; Sell = Red and previous bar was Bull
+    buy = (green & bear.shift(1)).fillna(False)
+    sell = (red & bull.shift(1)).fillna(False)
+    return buy, sell
 
 def atr_trailing_stop(df):
     # ATR Trailing Stop (Chandelier Exit variant)
@@ -343,4 +409,5 @@ INDICATORS = {
     'Chande Momentum': (chande_momentum, 'ta-lib / Tushar Chande'),
     'LinReg Slope': (linreg_slope, 'ta-lib'),
     'ATR Trailing Stop': (atr_trailing_stop, 'Chuck LeBeau'),
+    'CDC ATR Trail Stop': (cdc_atr_trailing_stop, 'TradingView / CDC'),
 }
